@@ -24,6 +24,7 @@
 #include <uhd/exception.hpp>
 #include <boost/format.hpp>
 #include <boost/thread.hpp>
+#include <boost/program_options.hpp>
 #include <cmath>
 #include <iostream>
 #include <csignal>
@@ -62,7 +63,8 @@ template<typename samp_type> void recv_to_file(
     uhd::usrp::multi_usrp::sptr usrp,
     const std::string &cpu_format,
     const std::string &wire_format,
-    size_t samps_per_buff
+    size_t samps_per_buff,
+    float gain
 );
 void *recvTask(void* ptr);
 bool check_locked_sensor(std::vector<std::string> sensor_names, const char* sensor_name, get_sensor_fn_t get_sensor_fn, double setup_time);
@@ -74,21 +76,51 @@ void sig_int_handler(int){stop_signal_called = true;}
  /* MAIN,INITIALIZATION */ 
  
 int UHD_SAFE_MAIN(int argc, char *argv[]){
-    uhd::set_thread_priority_safe(); 
+	uhd::set_thread_priority_safe(); 
     
-    ////////Configure radio    
+	
+	namespace po = boost::program_options;
+	
     std::string args,type, ant, subdev, ref, wirefmt;
     size_t spb;
     //size_t total_num_samps;
+    float vgain;
     double rate, freq, gain, bw, setup_time;
     int i;
+    
+	////////////////////////////////////////////////
+	//CLI Options
+	po::options_description desc("Allowed options");
+	desc.add_options()
+	        ("help", "help message")
+	        ("freq", po::value<double>(&freq)->default_value(107.3), "RF center frequency in MHz")
+	        ("vgain", po::value<float>(&vgain)->default_value(1), "volume gain")
+	    ;
+	
+	    po::variables_map vm;
+	    po::store(po::parse_command_line(argc, argv, desc), vm);
+	    po::notify(vm);
+
+	    //print the help message
+	    if (vm.count("help")) {
+	        std::cout << boost::format("UHD RX samples to file %s") % desc << std::endl;
+	        std::cout
+	            << std::endl
+	            << "This application streams data from a single channel of a USRP device to a file.\n"
+	            << std::endl;
+	        return ~0;
+	    }
+	    
+	/////////////////////////////////////////////////////
+    ////////Configure radio    
+
 
     /*PUT RADIO PARAMETERS HERE*/
     args = "";
     type = "float";
     spb = 10000; //Numbers of samples in a buffer
     rate = 640000; //Cannot = 0
-    freq = 107300000;
+    freq = freq*1e6;
     //freq = 96100000;
     gain = 40;
     ant  = "RX2";  //ant can be "RX/TX" or "RX2"
@@ -176,7 +208,7 @@ int UHD_SAFE_MAIN(int argc, char *argv[]){
     std::cout << "Press Ctrl + C to stop streaming..." << std::endl;
  
 #define recv_to_file_args(format) \
-    (usrp, format, wirefmt, spb)
+    (usrp, format, wirefmt, spb,vgain)
      
     //recv to file
     recv_to_file<std::complex<float> >recv_to_file_args("fc32");
@@ -192,7 +224,8 @@ template<typename samp_type> void recv_to_file(
     uhd::usrp::multi_usrp::sptr usrp,
     const std::string &cpu_format,
     const std::string &wire_format,
-    size_t samps_per_buff
+    size_t samps_per_buff,
+    float gain
 ){
 	//Constants
 	const int num_audio_samps = samps_per_buff/20;
@@ -325,8 +358,8 @@ template<typename samp_type> void recv_to_file(
             k = 0;
             for(i = 0; i < samps_per_buff - 1; i++){
                 if(i % 20 == 0){
-                    sig_out[k++] = filt_val[i];
-                	sig_out[k++] = filt_val[i];
+                    sig_out[k++] = filt_val[i]*gain;
+                	sig_out[k++] = filt_val[i]*gain;
                 }
             }
         }
